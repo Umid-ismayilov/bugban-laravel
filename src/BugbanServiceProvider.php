@@ -36,6 +36,8 @@ class BugbanServiceProvider extends ServiceProvider
             'enabled' => isset($cfg['enabled']) ? $cfg['enabled'] : true,
             'sample_rate' => isset($cfg['sample_rate']) ? $cfg['sample_rate'] : 1.0,
             'capture_requests' => isset($cfg['capture_requests']) ? $cfg['capture_requests'] : false,
+            'capture_queries' => isset($cfg['capture_queries']) ? $cfg['capture_queries'] : true,
+            'slow_query_ms' => isset($cfg['slow_query_ms']) ? $cfg['slow_query_ms'] : 1000,
             'redact' => isset($cfg['redact']) ? $cfg['redact'] : null,
             'app_name' => (isset($cfg['app_name']) && $cfg['app_name']) ? $cfg['app_name'] : $this->appName(),
             'framework' => 'laravel',
@@ -74,6 +76,32 @@ class BugbanServiceProvider extends ServiceProvider
             $router = $this->app['router'];
             $router->pushMiddlewareToGroup('web', CaptureRequests::class);
             $router->pushMiddlewareToGroup('api', CaptureRequests::class);
+        }
+
+        // Slow-query (performance) monitoring — listen to every executed DB
+        // query on every connection (MySQL/PostgreSQL/SQLite/...). The SDK
+        // drops queries faster than slow_query_ms, so this stays cheap.
+        if ($config->captureQueries) {
+            try {
+                $this->app['db']->listen(function ($query) {
+                    try {
+                        // Laravel >= 5.2 passes an Illuminate\Database\Events\QueryExecuted
+                        // object; $query->time is already in milliseconds.
+                        if (is_object($query) && isset($query->sql)) {
+                            Bugban::recordQuery($query->sql, (float) $query->time, array(
+                                'connection' => isset($query->connectionName) ? $query->connectionName : null,
+                                'bindings' => (isset($query->bindings) && is_array($query->bindings)) ? $query->bindings : array(),
+                            ));
+                        }
+                    } catch (\Exception $e) {
+                        // never break the host app
+                    } catch (\Throwable $e) {
+                    }
+                });
+            } catch (\Exception $e) {
+                // never break the host app
+            } catch (\Throwable $e) {
+            }
         }
     }
 

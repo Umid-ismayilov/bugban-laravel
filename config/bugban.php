@@ -20,6 +20,12 @@ return array(
     // Also push per-request performance logs to /api/ingest/requests.
     'capture_requests' => env('BUGBAN_CAPTURE_REQUESTS', false),
 
+    // Slow-query (performance) monitoring: report DB queries slower than
+    // slow_query_ms milliseconds to /api/ingest/queries. Works for every
+    // Laravel DB connection (MySQL, PostgreSQL, SQLite, ...).
+    'capture_queries' => env('BUGBAN_CAPTURE_QUERIES', true),
+    'slow_query_ms' => env('BUGBAN_SLOW_QUERY_MS', 1000),
+
     // Keys scrubbed from request/session/context before sending.
     'redact' => array('password', 'password_confirmation', 'token', 'secret', 'authorization', 'cookie', 'api_key'),
 );
