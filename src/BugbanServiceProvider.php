@@ -11,6 +11,9 @@ use Illuminate\Support\ServiceProvider;
 
 class BugbanServiceProvider extends ServiceProvider
 {
+    /** @var array Keys to redact from request body/query/headers/cookies. */
+    private $redactKeys = array('password', 'password_confirmation', 'token', 'secret', 'authorization', 'cookie', 'api_key');
+
     public function register()
     {
         $this->mergeConfigFrom(__DIR__ . '/../config/bugban.php', 'bugban');
@@ -20,6 +23,10 @@ class BugbanServiceProvider extends ServiceProvider
     {
         $cfg = $this->app['config']['bugban'];
         $self = $this;
+
+        if (isset($cfg['redact']) && is_array($cfg['redact'])) {
+            $this->redactKeys = $cfg['redact'];
+        }
 
         $config = new Config(array(
             'api_key' => isset($cfg['api_key']) ? $cfg['api_key'] : '',
@@ -76,15 +83,24 @@ class BugbanServiceProvider extends ServiceProvider
             if ($this->app->bound('request')) {
                 $r = $this->app['request'];
                 if (is_object($r) && method_exists($r, 'method')) {
+                    // $r->all() merges JSON body + form input; redact secrets.
+                    $input = method_exists($r, 'all') ? $r->all() : array();
                     $ctx['request'] = array(
                         'method' => $r->method(),
                         'url' => $r->fullUrl(),
                         'path' => '/' . ltrim($r->path(), '/'),
-                        'query' => $r->query(),
-                        'body' => $r->except(array('password', 'password_confirmation')),
+                        'query' => $this->redactInput(is_array($r->query()) ? $r->query() : (array) $r->query()),
+                        'body' => $this->redactInput(is_array($input) ? $input : array()),
                         'headers' => $this->redactHeaders($r->headers->all()),
+                        'cookies' => $this->redactInput($this->cookiesOf($r)),
                         'ip' => $r->ip(),
+                        'content_type' => method_exists($r, 'header') ? $r->header('Content-Type') : null,
+                        'user_agent' => method_exists($r, 'userAgent') ? $r->userAgent() : null,
+                        'referer' => method_exists($r, 'header') ? $r->header('referer') : null,
+                        'protocol' => isset($_SERVER['SERVER_PROTOCOL']) ? $_SERVER['SERVER_PROTOCOL'] : null,
+                        'host' => method_exists($r, 'getHost') ? $r->getHost() : null,
                     );
+                    $this->attachRoute($ctx['request'], $r);
                     if (method_exists($r, 'hasSession') && $r->hasSession()) {
                         $ctx['session'] = array('id' => $r->session()->getId());
                     }
@@ -107,11 +123,85 @@ class BugbanServiceProvider extends ServiceProvider
         return $ctx;
     }
 
+    /**
+     * Add route name + controller action to the request array when available.
+     *
+     * @param array $request (by reference)
+     * @param object $r Laravel Request
+     */
+    private function attachRoute(array &$request, $r)
+    {
+        if (!method_exists($r, 'route')) {
+            return;
+        }
+        try {
+            $route = $r->route();
+        } catch (\Exception $e) {
+            return;
+        } catch (\Throwable $e) {
+            return;
+        }
+        if (!is_object($route)) {
+            return;
+        }
+        if (method_exists($route, 'getName')) {
+            $request['route'] = $route->getName();
+        }
+        if (method_exists($route, 'getActionName')) {
+            $request['action'] = $route->getActionName();
+        }
+        if (method_exists($route, 'uri')) {
+            $request['route_uri'] = $route->uri();
+        }
+    }
+
+    /**
+     * @param object $r Laravel Request
+     * @return array
+     */
+    private function cookiesOf($r)
+    {
+        if (method_exists($r, 'cookie')) {
+            $cookies = $r->cookie();
+            if (is_array($cookies)) {
+                return $cookies;
+            }
+        }
+        return isset($_COOKIE) && is_array($_COOKIE) ? $_COOKIE : array();
+    }
+
+    /**
+     * Recursively redact configured secret keys from an input array.
+     *
+     * @param array $data
+     * @return array
+     */
+    private function redactInput(array $data)
+    {
+        $keys = array_map('strtolower', $this->redactKeys);
+        $out = array();
+        foreach ($data as $k => $v) {
+            if (in_array(strtolower((string) $k), $keys, true)) {
+                $out[$k] = '[REDACTED]';
+            } elseif (is_array($v)) {
+                $out[$k] = $this->redactInput($v);
+            } else {
+                $out[$k] = $v;
+            }
+        }
+        return $out;
+    }
+
     private function redactHeaders($headers)
     {
-        foreach (array('authorization', 'cookie', 'x-xsrf-token') as $h) {
-            if (isset($headers[$h])) {
-                $headers[$h] = array('[REDACTED]');
+        if (!is_array($headers)) {
+            return array();
+        }
+        $keys = array_map('strtolower', $this->redactKeys);
+        $keys = array_merge($keys, array('cookie', 'x-xsrf-token'));
+        foreach ($headers as $name => $value) {
+            if (in_array(strtolower((string) $name), $keys, true)) {
+                $headers[$name] = array('[REDACTED]');
             }
         }
         return $headers;
