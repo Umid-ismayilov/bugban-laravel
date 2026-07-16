@@ -7,6 +7,9 @@ return array(
     // Your Bugban platform host.
     'host' => env('BUGBAN_HOST', 'https://bugban.online'),
 
+    // Shown in the Bugban panel after the one-time install ping (defaults to config('app.name')).
+    'app_name' => env('BUGBAN_APP_NAME', null),
+
     'environment' => env('BUGBAN_ENV', env('APP_ENV', 'production')),
     'release' => env('BUGBAN_RELEASE', null),
     'enabled' => env('BUGBAN_ENABLED', true),

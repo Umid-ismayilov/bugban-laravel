@@ -37,6 +37,10 @@ class BugbanServiceProvider extends ServiceProvider
             'sample_rate' => isset($cfg['sample_rate']) ? $cfg['sample_rate'] : 1.0,
             'capture_requests' => isset($cfg['capture_requests']) ? $cfg['capture_requests'] : false,
             'redact' => isset($cfg['redact']) ? $cfg['redact'] : null,
+            'app_name' => (isset($cfg['app_name']) && $cfg['app_name']) ? $cfg['app_name'] : $this->appName(),
+            'framework' => 'laravel',
+            'framework_version' => $this->frameworkVersion(),
+            'sdk' => 'bugban/laravel',
             'context_resolver' => function () use ($self) {
                 return $self->laravelContext();
             },
@@ -205,6 +209,43 @@ class BugbanServiceProvider extends ServiceProvider
             }
         }
         return $headers;
+    }
+
+    /**
+     * The application name (config('app.name')) — for the install ping.
+     *
+     * @return string|null
+     */
+    private function appName()
+    {
+        try {
+            $name = $this->app['config']['app.name'];
+            return (is_string($name) && $name !== '') ? $name : null;
+        } catch (\Exception $e) {
+            return null;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
+    /**
+     * The Laravel framework version — for the install ping.
+     *
+     * @return string|null
+     */
+    private function frameworkVersion()
+    {
+        try {
+            if (method_exists($this->app, 'version')) {
+                $v = $this->app->version();
+                return (is_string($v) && $v !== '') ? $v : null;
+            }
+        } catch (\Exception $e) {
+            // ignore
+        } catch (\Throwable $e) {
+            // ignore
+        }
+        return null;
     }
 
     private function configPath()
