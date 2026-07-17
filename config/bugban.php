@@ -20,6 +20,14 @@ return array(
     // Also push per-request performance logs to /api/ingest/requests.
     'capture_requests' => env('BUGBAN_CAPTURE_REQUESTS', false),
 
+    // Auto-forward log records (Log::error(), Log::critical(), caught-and-logged errors)
+    // to Bugban as handled events, so problems logged but never thrown aren't missed.
+    // log_level is the minimum PSR level forwarded: debug|info|notice|warning|error|
+    // critical|alert|emergency. Records that carry a Throwable in context are skipped
+    // here (Laravel's reported exceptions are already captured), avoiding double-reports.
+    'capture_logs' => env('BUGBAN_CAPTURE_LOGS', false),
+    'log_level' => env('BUGBAN_LOG_LEVEL', 'error'),
+
     // Slow-query (performance) monitoring: report DB queries slower than
     // slow_query_ms milliseconds to /api/ingest/queries. Works for every
     // Laravel DB connection (MySQL, PostgreSQL, SQLite, ...).

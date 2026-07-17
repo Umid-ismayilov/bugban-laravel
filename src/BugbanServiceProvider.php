@@ -42,6 +42,8 @@ class BugbanServiceProvider extends ServiceProvider
             'enabled' => isset($cfg['enabled']) ? $cfg['enabled'] : true,
             'sample_rate' => isset($cfg['sample_rate']) ? $cfg['sample_rate'] : 1.0,
             'capture_requests' => isset($cfg['capture_requests']) ? $cfg['capture_requests'] : false,
+            'capture_logs' => isset($cfg['capture_logs']) ? $cfg['capture_logs'] : false,
+            'log_level' => isset($cfg['log_level']) && $cfg['log_level'] ? $cfg['log_level'] : 'error',
             'capture_queries' => isset($cfg['capture_queries']) ? $cfg['capture_queries'] : true,
             'slow_query_ms' => isset($cfg['slow_query_ms']) ? $cfg['slow_query_ms'] : 1000,
             'explain_queries' => isset($cfg['explain_queries']) ? $cfg['explain_queries'] : true,
@@ -78,6 +80,24 @@ class BugbanServiceProvider extends ServiceProvider
                 }
             }
         });
+
+        // Auto-forward Log::error()/critical()/... records (and caught-and-logged errors
+        // that never re-throw) to Bugban. Push a Monolog handler onto the default log
+        // channel; it bubbles (file logging still happens) and the SDK's recursion guard
+        // keeps forwarding from looping. Records carrying a Throwable are skipped by the
+        // handler because the MessageLogged listener above already reports those.
+        if ($config->captureLogs) {
+            try {
+                $logger = \Illuminate\Support\Facades\Log::getLogger();
+                if ($logger instanceof \Monolog\Logger) {
+                    $logger->pushHandler(new BugbanLogHandler($config->logLevel, true));
+                }
+            } catch (\Exception $e) {
+                // never break the host app
+            } catch (\Throwable $e) {
+                // non-fatal
+            }
+        }
 
         if ($config->captureRequests) {
             $router = $this->app['router'];
