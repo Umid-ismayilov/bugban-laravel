@@ -14,6 +14,12 @@ class BugbanServiceProvider extends ServiceProvider
     /** @var array Keys to redact from request body/query/headers/cookies. */
     private $redactKeys = array('password', 'password_confirmation', 'token', 'secret', 'authorization', 'cookie', 'api_key');
 
+    /**
+     * @var bool Reentrancy guard. True while we run EXPLAIN on a slow query;
+     * the EXPLAIN query itself fires DB::listen, so the listener bails when set.
+     */
+    private static $explaining = false;
+
     public function register()
     {
         $this->mergeConfigFrom(__DIR__ . '/../config/bugban.php', 'bugban');
@@ -38,6 +44,7 @@ class BugbanServiceProvider extends ServiceProvider
             'capture_requests' => isset($cfg['capture_requests']) ? $cfg['capture_requests'] : false,
             'capture_queries' => isset($cfg['capture_queries']) ? $cfg['capture_queries'] : true,
             'slow_query_ms' => isset($cfg['slow_query_ms']) ? $cfg['slow_query_ms'] : 1000,
+            'explain_queries' => isset($cfg['explain_queries']) ? $cfg['explain_queries'] : true,
             'redact' => isset($cfg['redact']) ? $cfg['redact'] : null,
             'app_name' => (isset($cfg['app_name']) && $cfg['app_name']) ? $cfg['app_name'] : $this->appName(),
             'framework' => 'laravel',
@@ -82,17 +89,37 @@ class BugbanServiceProvider extends ServiceProvider
         // query on every connection (MySQL/PostgreSQL/SQLite/...). The SDK
         // drops queries faster than slow_query_ms, so this stays cheap.
         if ($config->captureQueries) {
+            $explainEnabled = $config->explainQueries;
+            $slowQueryMs = $config->slowQueryMs;
             try {
-                $this->app['db']->listen(function ($query) {
+                $this->app['db']->listen(function ($query) use ($self, $explainEnabled, $slowQueryMs) {
                     try {
+                        // The EXPLAIN query itself fires this listener — bail so it
+                        // is neither captured nor re-explained.
+                        if (self::$explaining) {
+                            return;
+                        }
                         // Laravel >= 5.2 passes an Illuminate\Database\Events\QueryExecuted
                         // object; $query->time is already in milliseconds.
-                        if (is_object($query) && isset($query->sql)) {
-                            Bugban::recordQuery($query->sql, (float) $query->time, array(
-                                'connection' => isset($query->connectionName) ? $query->connectionName : null,
-                                'bindings' => (isset($query->bindings) && is_array($query->bindings)) ? $query->bindings : array(),
-                            ));
+                        if (!(is_object($query) && isset($query->sql))) {
+                            return;
                         }
+                        $sql = $query->sql;
+                        $time = (float) $query->time;
+                        $connName = isset($query->connectionName) ? $query->connectionName : null;
+                        $bindings = (isset($query->bindings) && is_array($query->bindings)) ? $query->bindings : array();
+
+                        $meta = array('connection' => $connName, 'bindings' => $bindings);
+
+                        // Only EXPLAIN slow, plain SELECTs — and never let it throw.
+                        if ($explainEnabled && $time >= $slowQueryMs && $self->bugbanIsSelect($sql)) {
+                            $explain = $self->bugbanExplainQuery($connName, $sql, $bindings);
+                            if (is_array($explain)) {
+                                $meta['explain'] = $explain;
+                            }
+                        }
+
+                        Bugban::recordQuery($sql, $time, $meta);
                     } catch (\Exception $e) {
                         // never break the host app
                     } catch (\Throwable $e) {
@@ -103,6 +130,80 @@ class BugbanServiceProvider extends ServiceProvider
             } catch (\Throwable $e) {
             }
         }
+    }
+
+    /**
+     * @param string $sql
+     * @return bool True for a plain SELECT statement.
+     */
+    public function bugbanIsSelect($sql)
+    {
+        return stripos(ltrim((string) $sql), 'select') === 0;
+    }
+
+    /**
+     * Run EXPLAIN on the SAME connection and normalize it via ExplainParser.
+     * Guarded by a static reentrancy flag (the EXPLAIN query re-enters
+     * DB::listen) and wrapped so it NEVER throws — on any failure returns null
+     * and the query is reported without explain.
+     *
+     * @param string|null $connName
+     * @param string      $sql
+     * @param array       $bindings
+     * @return array|null
+     */
+    public function bugbanExplainQuery($connName, $sql, $bindings)
+    {
+        if (self::$explaining) {
+            return null;
+        }
+        self::$explaining = true;
+        $explain = null;
+        try {
+            $conn = $this->app['db']->connection($connName);
+            $driver = method_exists($conn, 'getDriverName') ? $conn->getDriverName() : null;
+
+            if ($driver === 'sqlite') {
+                $prefix = 'EXPLAIN QUERY PLAN ';
+            } elseif ($driver === 'mysql' || $driver === 'mariadb' || $driver === 'pgsql') {
+                $prefix = 'EXPLAIN ';
+            } else {
+                // Unknown/unsupported driver (e.g. sqlsrv) — skip explain.
+                self::$explaining = false;
+                return null;
+            }
+
+            $rows = $conn->select($prefix . $sql, is_array($bindings) ? $bindings : array());
+            $explain = \Bugban\Sdk\Support\ExplainParser::parse($driver, $this->bugbanRowsToArray($rows));
+        } catch (\Exception $e) {
+            $explain = null;
+        } catch (\Throwable $e) {
+            $explain = null;
+        }
+        self::$explaining = false;
+        return $explain;
+    }
+
+    /**
+     * Normalize a result set (array of stdClass rows) into assoc arrays.
+     *
+     * @param mixed $rows
+     * @return array
+     */
+    private function bugbanRowsToArray($rows)
+    {
+        $out = array();
+        if (!is_array($rows)) {
+            return $out;
+        }
+        foreach ($rows as $r) {
+            if (is_array($r)) {
+                $out[] = $r;
+            } elseif (is_object($r)) {
+                $out[] = (array) $r;
+            }
+        }
+        return $out;
     }
 
     /**

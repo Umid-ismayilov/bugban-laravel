@@ -26,6 +26,11 @@ return array(
     'capture_queries' => env('BUGBAN_CAPTURE_QUERIES', true),
     'slow_query_ms' => env('BUGBAN_SLOW_QUERY_MS', 1000),
 
+    // When a slow SELECT is captured, also run EXPLAIN on the same connection
+    // and report whether an index is used, so the panel can flag full-table
+    // scans. Safe: SELECT-only, guarded against reentrancy, and never throws.
+    'explain_queries' => env('BUGBAN_EXPLAIN_QUERIES', true),
+
     // Keys scrubbed from request/session/context before sending.
     'redact' => array('password', 'password_confirmation', 'token', 'secret', 'authorization', 'cookie', 'api_key'),
 );
