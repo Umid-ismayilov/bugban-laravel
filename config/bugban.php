@@ -34,6 +34,13 @@ return array(
     'capture_queries' => env('BUGBAN_CAPTURE_QUERIES', true),
     'slow_query_ms' => env('BUGBAN_SLOW_QUERY_MS', 1000),
 
+    // Let the Bugban panel ask this app to re-run one of its own captured
+    // SELECTs and report how long it took — so you can verify an index actually
+    // helped without leaving the panel. Only a single SELECT runs, a LIMIT is
+    // forced, it is rolled back, and ONLY the timing and row count are sent
+    // back — never any row data. Set to false to switch the feature off.
+    'allow_query_test' => env('BUGBAN_ALLOW_QUERY_TEST', true),
+
     // When a slow SELECT is captured, also run EXPLAIN on the same connection
     // and report whether an index is used, so the panel can flag full-table
     // scans. Safe: SELECT-only, guarded against reentrancy, and never throws.

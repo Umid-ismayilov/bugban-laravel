@@ -47,6 +47,7 @@ class BugbanServiceProvider extends ServiceProvider
             'capture_queries' => isset($cfg['capture_queries']) ? $cfg['capture_queries'] : true,
             'slow_query_ms' => isset($cfg['slow_query_ms']) ? $cfg['slow_query_ms'] : 1000,
             'explain_queries' => isset($cfg['explain_queries']) ? $cfg['explain_queries'] : true,
+            'allow_query_test' => isset($cfg['allow_query_test']) ? $cfg['allow_query_test'] : true,
             'redact' => isset($cfg['redact']) ? $cfg['redact'] : null,
             'app_name' => (isset($cfg['app_name']) && $cfg['app_name']) ? $cfg['app_name'] : $this->appName(),
             'framework' => 'laravel',
@@ -60,6 +61,25 @@ class BugbanServiceProvider extends ServiceProvider
         $client = new Client($config);
         Bugban::setClient($client);
         $this->app->instance(Client::class, $client);
+
+        // Query test runner: re-runs one of this app's own captured SELECTs on
+        // its own connection so the panel can show whether a fix helped. Always
+        // inside a rolled-back transaction; only the row COUNT is returned.
+        $client->setQueryRunner(function ($sql, array $bindings) {
+            $connection = \Illuminate\Support\Facades\DB::connection();
+            $connection->beginTransaction();
+            try {
+                $rows = $connection->select($sql, $bindings);
+
+                return is_array($rows) ? count($rows) : 0;
+            } finally {
+                try {
+                    $connection->rollBack();
+                } catch (\Exception $e) {
+                    // Nothing was written; a failed rollback is not fatal.
+                }
+            }
+        });
 
         if ($this->app->runningInConsole()) {
             $this->publishes(array(

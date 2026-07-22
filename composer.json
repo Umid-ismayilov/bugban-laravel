@@ -6,7 +6,7 @@
     "license": "MIT",
     "require": {
         "php": ">=7.1",
-        "bugban/php-sdk": "^1.4",
+        "bugban/php-sdk": "^1.5",
         "illuminate/support": ">=5.5"
     },
     "autoload": {
