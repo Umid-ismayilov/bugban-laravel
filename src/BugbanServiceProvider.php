@@ -65,6 +65,14 @@ class BugbanServiceProvider extends ServiceProvider
         // Query test runner: re-runs one of this app's own captured SELECTs on
         // its own connection so the panel can show whether a fix helped. Always
         // inside a rolled-back transaction; only the row COUNT is returned.
+        // DEFENSIVE: the core SDK may be older than this adapter (a stale
+        // composer.lock, a leftover manual libs/ copy loaded first, or opcache
+        // still holding the old class). Monitoring must never take the host
+        // application down, so probe before calling anything new.
+        if (!method_exists($client, 'setQueryRunner')) {
+            return;
+        }
+
         $client->setQueryRunner(function ($sql, array $bindings) {
             $connection = \Illuminate\Support\Facades\DB::connection();
             $connection->beginTransaction();
