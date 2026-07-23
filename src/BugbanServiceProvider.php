@@ -73,13 +73,22 @@ class BugbanServiceProvider extends ServiceProvider
             return;
         }
 
-        $client->setQueryRunner(function ($sql, array $bindings) {
+        // $returnRows: the tester asks for the actual rows when it runs EXPLAIN,
+        // so the panel can show a CURRENT index verdict instead of one captured
+        // before the developer's fix. Otherwise only the row count is needed.
+        $client->setQueryRunner(function ($sql, array $bindings, $returnRows = false) {
             $connection = \Illuminate\Support\Facades\DB::connection();
             $connection->beginTransaction();
             try {
                 $rows = $connection->select($sql, $bindings);
+                if (! is_array($rows)) {
+                    return $returnRows ? array() : 0;
+                }
+                if ($returnRows) {
+                    return array_map(function ($r) { return (array) $r; }, $rows);
+                }
 
-                return is_array($rows) ? count($rows) : 0;
+                return count($rows);
             } finally {
                 try {
                     $connection->rollBack();
