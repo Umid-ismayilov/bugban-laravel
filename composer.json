@@ -2,7 +2,12 @@
     "name": "bugban/laravel",
     "description": "Bugban SDK — Laravel integration: automatic exception, request, auth & session capture.",
     "type": "library",
-    "keywords": ["bugban", "laravel", "error-tracking", "monitoring"],
+    "keywords": [
+        "bugban",
+        "laravel",
+        "error-tracking",
+        "monitoring"
+    ],
     "license": "MIT",
     "require": {
         "php": ">=7.1",
@@ -28,5 +33,10 @@
         "sort-packages": true
     },
     "minimum-stability": "stable",
-    "prefer-stable": true
+    "prefer-stable": true,
+    "homepage": "https://bugban.online",
+    "support": {
+        "issues": "https://github.com/Umid-ismayilov/bugban-php-sdk/issues",
+        "docs": "https://bugban.online/integrations/laravel"
+    }
 }
