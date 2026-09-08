@@ -34,6 +34,21 @@ return array(
     'capture_queries' => env('BUGBAN_CAPTURE_QUERIES', true),
     'slow_query_ms' => env('BUGBAN_SLOW_QUERY_MS', 1000),
 
+    // Background-process attribution: one record per artisan command, cron run,
+    // scheduled task and queue JOB (duration, CPU, peak memory, query count and
+    // DB time, exit code). The panel uses it to show which command loads the
+    // server, which commands overlap in time, and which slow queries belong to
+    // which cron. Web requests are never recorded here. Cheap: one POST per
+    // process at shutdown (batched every 20 jobs for long-lived workers).
+    'capture_runs' => env('BUGBAN_CAPTURE_RUNS', true),
+
+    // Self-update. `php artisan bugban:update` upgrades every bugban/* package
+    // through Composer (`composer require bugban/*:^latest`; composer only
+    // rewrites composer.lock when the whole resolution succeeds).
+    // Set to true to let the scheduler run it once a day automatically.
+    // Default OFF: unattended dependency upgrades are a deployment decision.
+    'auto_update' => env('BUGBAN_AUTO_UPDATE', false),
+
     // Let the Bugban panel ask this app to re-run one of its own captured
     // SELECTs and report how long it took — so you can verify an index actually
     // helped without leaving the panel. Only a single SELECT runs, a LIMIT is
