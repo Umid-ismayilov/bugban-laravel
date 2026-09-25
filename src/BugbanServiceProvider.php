@@ -57,6 +57,35 @@ class BugbanServiceProvider extends ServiceProvider
             $this->redactKeys = $cfg['redact'];
         }
 
+        // Manual install (install.sh / libs/): the app already called
+        // Bugban::init([...]) from bugban.php with the key inline and .env has
+        // no BUGBAN_API_KEY. Adopt that client instead of replacing it with an
+        // unusable one — the adapter then only adds the Laravel hooks
+        // (DB::listen, jobs, commands, request context).
+        $existing = Bugban::client();
+        if ((!isset($cfg['api_key']) || (string) $cfg['api_key'] === '')
+            && $existing !== null && $existing->config()->isUsable()) {
+            $config = $existing->config();
+            $config->framework = 'laravel';
+            $config->frameworkVersion = $this->frameworkVersion();
+            $config->sdkName = 'bugban/laravel';
+            if ($config->appName === null) {
+                $config->appName = $this->appName();
+            }
+            if ($config->contextResolver === null) {
+                $config->contextResolver = function () use ($self) {
+                    return $self->laravelContext();
+                };
+            }
+            if (is_array($config->redact)) {
+                $this->redactKeys = $config->redact;
+            }
+            $client = $existing;
+            $this->app->instance(Client::class, $client);
+
+            return $this->bootHooks($cfg, $config, $client);
+        }
+
         $config = new Config(array(
             'api_key' => isset($cfg['api_key']) ? $cfg['api_key'] : '',
             'host' => isset($cfg['host']) ? $cfg['host'] : 'https://bugban.online',
@@ -86,6 +115,20 @@ class BugbanServiceProvider extends ServiceProvider
         $client = new Client($config);
         Bugban::setClient($client);
         $this->app->instance(Client::class, $client);
+
+        return $this->bootHooks($cfg, $config, $client);
+    }
+
+    /**
+     * Everything after the client exists: query runner, console commands,
+     * DB/job/command/log listeners. Shared by the composer path (adapter owns
+     * the client) and the manual path (client from bugban.php).
+     *
+     * @return void
+     */
+    private function bootHooks($cfg, Config $config, Client $client)
+    {
+        $self = $this;
 
         // Query test runner: re-runs one of this app's own captured SELECTs on
         // its own connection so the panel can show whether a fix helped. Always
