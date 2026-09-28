@@ -12,7 +12,7 @@ use Illuminate\Support\ServiceProvider;
 class BugbanServiceProvider extends ServiceProvider
 {
     /** Package version, reported in the SDK ping (keep in step with the core's Bugban::VERSION). */
-    const VERSION = '1.7.5';
+    const VERSION = '1.7.6';
 
     /** @var array Keys to redact from request body/query/headers/cookies. */
     private $redactKeys = array('password', 'password_confirmation', 'token', 'secret', 'authorization', 'cookie', 'api_key');
@@ -310,7 +310,9 @@ class BugbanServiceProvider extends ServiceProvider
                         $connName = isset($query->connectionName) ? $query->connectionName : null;
                         $bindings = (isset($query->bindings) && is_array($query->bindings)) ? $query->bindings : array();
 
-                        $meta = array('connection' => $connName, 'bindings' => $bindings);
+                        // explain_tried: this adapter already asked; a failed
+                        // EXPLAIN must not be retried by the core (>= 1.7.6).
+                        $meta = array('connection' => $connName, 'bindings' => $bindings, 'explain_tried' => true);
 
                         // Only EXPLAIN slow, plain SELECTs — and never let it throw.
                         if ($explainEnabled && $time >= $slowQueryMs && $self->bugbanIsSelect($sql)) {
