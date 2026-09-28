@@ -12,7 +12,7 @@ use Illuminate\Support\ServiceProvider;
 class BugbanServiceProvider extends ServiceProvider
 {
     /** Package version, reported in the SDK ping (keep in step with the core's Bugban::VERSION). */
-    const VERSION = '1.7.4';
+    const VERSION = '1.7.5';
 
     /** @var array Keys to redact from request body/query/headers/cookies. */
     private $redactKeys = array('password', 'password_confirmation', 'token', 'secret', 'authorization', 'cookie', 'api_key');
