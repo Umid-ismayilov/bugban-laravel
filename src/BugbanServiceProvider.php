@@ -15,7 +15,7 @@ class BugbanServiceProvider extends ServiceProvider
     private $resolvingAuthUser = false;
 
     /** Package version, reported in the SDK ping (keep in step with the core's Bugban::VERSION). */
-    const VERSION = '1.7.8';
+    const VERSION = '1.7.9';
 
     /** @var array Keys to redact from request body/query/headers/cookies. */
     private $redactKeys = array('password', 'password_confirmation', 'token', 'secret', 'authorization', 'cookie', 'api_key');
@@ -530,7 +530,11 @@ class BugbanServiceProvider extends ServiceProvider
             try {
                 $guard = $auth->guard($name);
                 if ($viaCookies && method_exists($guard, 'getName')) {
-                    $u = method_exists($guard, 'hasUser') && $guard->hasUser() ? $guard->user() : null;
+                    // Laravel 5.5 saves the session at terminate: a flush after
+                    // that is "cold" although the guard already holds the user.
+                    $u = method_exists('Bugban\\Sdk\\Support\\LaravelAuth', 'loadedUser')
+                        ? \Bugban\Sdk\Support\LaravelAuth::loadedUser($guard)
+                        : (method_exists($guard, 'hasUser') && $guard->hasUser() ? $guard->user() : null);
                 } elseif ($name === $default || in_array($name, $forced, true)) {
                     $u = $guard->check() ? $guard->user() : null;
                 } elseif (method_exists($guard, 'hasUser') && $guard->hasUser()) {
