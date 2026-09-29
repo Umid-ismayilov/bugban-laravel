@@ -15,7 +15,7 @@ class BugbanServiceProvider extends ServiceProvider
     private $resolvingAuthUser = false;
 
     /** Package version, reported in the SDK ping (keep in step with the core's Bugban::VERSION). */
-    const VERSION = '1.7.7';
+    const VERSION = '1.7.8';
 
     /** @var array Keys to redact from request body/query/headers/cookies. */
     private $redactKeys = array('password', 'password_confirmation', 'token', 'secret', 'authorization', 'cookie', 'api_key');
@@ -436,7 +436,7 @@ class BugbanServiceProvider extends ServiceProvider
                         'query' => $this->redactInput(is_array($r->query()) ? $r->query() : (array) $r->query()),
                         'body' => $this->redactInput(is_array($input) ? $input : array()),
                         'headers' => $this->redactHeaders($r->headers->all()),
-                        'cookies' => $this->redactInput($this->cookiesOf($r)),
+                        'cookies' => $this->redactCookieValues($this->redactInput($this->cookiesOf($r))),
                         'ip' => $r->ip(),
                         'content_type' => method_exists($r, 'header') ? $r->header('Content-Type') : null,
                         'user_agent' => method_exists($r, 'userAgent') ? $r->userAgent() : null,
@@ -516,13 +516,22 @@ class BugbanServiceProvider extends ServiceProvider
         } catch (\Throwable $e) {
         }
 
+        // Errors before the "web" group (404 for a missing file, 405, a global
+        // middleware) have no started session: check() would see nobody, or log
+        // in through the remember cookie and fire Login events. Those guards are
+        // resolved read-only from the request cookies instead (core SDK).
+        $cold = $session === null || (method_exists($session, 'isStarted') && !$session->isStarted());
+        $viaCookies = $cold && method_exists('Bugban\\Sdk\\Support\\LaravelAuth', 'fromCookies');
+
         // Cheap guards first: already resolved or session-key hits; token
         // guards (a DB lookup each) last.
         $later = array();
         foreach ($names as $name) {
             try {
                 $guard = $auth->guard($name);
-                if ($name === $default || in_array($name, $forced, true)) {
+                if ($viaCookies && method_exists($guard, 'getName')) {
+                    $u = method_exists($guard, 'hasUser') && $guard->hasUser() ? $guard->user() : null;
+                } elseif ($name === $default || in_array($name, $forced, true)) {
                     $u = $guard->check() ? $guard->user() : null;
                 } elseif (method_exists($guard, 'hasUser') && $guard->hasUser()) {
                     $u = $guard->user();
@@ -539,6 +548,12 @@ class BugbanServiceProvider extends ServiceProvider
             }
             if ($u) {
                 return $this->describeAuthUser($u, $name);
+            }
+        }
+        if ($viaCookies) {
+            $found = \Bugban\Sdk\Support\LaravelAuth::fromCookies($this->app, $auth, $names);
+            if (is_array($found)) {
+                return $found;
             }
         }
         foreach ($later as $name) {
@@ -753,6 +768,29 @@ class BugbanServiceProvider extends ServiceProvider
      * @param array $data
      * @return array
      */
+    /**
+     * Session, remember-me, XSRF and other credential cookies never leave the
+     * app: a replayed laravel_session / remember_admin_* is a live login.
+     */
+    private function redactCookieValues(array $cookies)
+    {
+        $name = null;
+        try {
+            $name = (string) $this->app['config']->get('session.cookie', '');
+        } catch (\Throwable $e) {
+        }
+        if (method_exists('Bugban\\Sdk\\Support\\ContextCollector', 'redactCookies')) {
+            return \Bugban\Sdk\Support\ContextCollector::redactCookies($cookies, $name);
+        }
+        $out = array();
+        foreach ($cookies as $k => $v) {
+            $lk = strtolower((string) $k);
+            $out[$k] = ($name !== null && $lk === strtolower($name)) || strpos($lk, 'remember_') === 0
+                || preg_match('/sess|token|auth|xsrf|csrf|jwt|identity|sid$/', $lk) ? '[REDACTED]' : $v;
+        }
+        return $out;
+    }
+
     private function redactInput(array $data)
     {
         $keys = array_map('strtolower', $this->redactKeys);
