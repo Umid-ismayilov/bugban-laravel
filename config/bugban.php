@@ -14,6 +14,11 @@ return array(
     'release' => env('BUGBAN_RELEASE', null),
     'enabled' => env('BUGBAN_ENABLED', true),
 
+    // Signed-in user is looked up on every auth guard (web, admin, api, ...),
+    // not only the default. List guards here (comma separated) to set the order
+    // or to resolve a guard the request has not touched yet, e.g. "admin,web".
+    'auth_guards' => env('BUGBAN_AUTH_GUARDS', ''),
+
     // 1.0 = send everything; 0.25 = sample 25% of events.
     'sample_rate' => env('BUGBAN_SAMPLE_RATE', 1.0),
 

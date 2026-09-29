@@ -11,8 +11,11 @@ use Illuminate\Support\ServiceProvider;
 
 class BugbanServiceProvider extends ServiceProvider
 {
+    /** @var bool The auth lookup may run queries that call back into the SDK. */
+    private $resolvingAuthUser = false;
+
     /** Package version, reported in the SDK ping (keep in step with the core's Bugban::VERSION). */
-    const VERSION = '1.7.6';
+    const VERSION = '1.7.7';
 
     /** @var array Keys to redact from request body/query/headers/cookies. */
     private $redactKeys = array('password', 'password_confirmation', 'token', 'secret', 'authorization', 'cookie', 'api_key');
@@ -447,21 +450,133 @@ class BugbanServiceProvider extends ServiceProvider
                     }
                 }
             }
-            $auth = $this->app['auth'];
-            if ($auth->check()) {
-                $u = $auth->user();
-                $ctx['user'] = array(
-                    'id' => method_exists($u, 'getAuthIdentifier') ? $u->getAuthIdentifier() : null,
-                    'email' => isset($u->email) ? $u->email : null,
-                    'name' => isset($u->name) ? $u->name : null,
-                );
-            }
+            $ctx['user'] = $this->authUser();
         } catch (\Exception $e) {
             // never break the host app while collecting context
         } catch (\Throwable $e) {
         }
 
         return $ctx;
+    }
+
+    /**
+     * The signed-in user of ANY guard, not only the default one: apps often put
+     * their admin panel on a separate guard (auth:admin), and those errors used
+     * to arrive anonymous. The default guard is checked as before; the others
+     * only when the request already resolved them (hasUser()), so no extra
+     * session/DB lookups. BUGBAN_AUTH_GUARDS=admin,customer forces an order and
+     * lets those guards be resolved even if nothing touched them yet.
+     *
+     * @return array|null
+     */
+    private function authUser()
+    {
+        $auth = $this->app['auth'];
+        $default = null;
+        try {
+            $default = $auth->getDefaultDriver();
+        } catch (\Throwable $e) {
+        }
+        $forced = array_filter(array_map('trim', explode(',', (string) $this->app['config']->get('bugban.auth_guards', ''))));
+        $names = array_values(array_unique(array_merge(
+            $forced,
+            $default !== null ? array($default) : array(),
+            array_keys((array) $this->app['config']->get('auth.guards', array()))
+        )));
+
+        if ($this->resolvingAuthUser) {
+            return null;
+        }
+        $this->resolvingAuthUser = true;
+        try {
+            return $this->authUserFrom($auth, $names, $default, $forced);
+        } finally {
+            $this->resolvingAuthUser = false;
+        }
+    }
+
+    /**
+     * Which guard holds the user, without guessing:
+     *  - default / BUGBAN_AUTH_GUARDS guards: a full check() (what the app does);
+     *  - any guard that already resolved its user this request: hasUser();
+     *  - a session guard whose login key is in the session (admin panels on a
+     *    separate guard) or a token guard when the request carries a bearer
+     *    token — resolved then, so separate admin guards need no setUser().
+     */
+    private function authUserFrom($auth, array $names, $default, array $forced)
+    {
+        $session = null;
+        $bearer = null;
+        try {
+            if ($this->app->bound('request')) {
+                $req = $this->app['request'];
+                $session = method_exists($req, 'hasSession') && $req->hasSession() ? $req->session() : null;
+                $bearer = method_exists($req, 'bearerToken') ? $req->bearerToken() : null;
+            }
+        } catch (\Throwable $e) {
+        }
+
+        // Cheap guards first: already resolved or session-key hits; token
+        // guards (a DB lookup each) last.
+        $later = array();
+        foreach ($names as $name) {
+            try {
+                $guard = $auth->guard($name);
+                if ($name === $default || in_array($name, $forced, true)) {
+                    $u = $guard->check() ? $guard->user() : null;
+                } elseif (method_exists($guard, 'hasUser') && $guard->hasUser()) {
+                    $u = $guard->user();
+                } elseif (method_exists($guard, 'getName') && $session !== null) {
+                    $u = $session->has($guard->getName()) ? $guard->user() : null;
+                } else {
+                    $u = null;
+                    if ($bearer && !method_exists($guard, 'getName')) {
+                        $later[] = $name;
+                    }
+                }
+            } catch (\Throwable $e) {
+                $u = null;
+            }
+            if ($u) {
+                return $this->describeAuthUser($u, $name);
+            }
+        }
+        foreach ($later as $name) {
+            try {
+                $u = $auth->guard($name)->user();
+            } catch (\Throwable $e) {
+                $u = null;
+            }
+            if ($u) {
+                return $this->describeAuthUser($u, $name);
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @return array
+     */
+    private function describeAuthUser($u, $name)
+    {
+        $email = isset($u->email) ? $u->email : null;
+        $display = isset($u->name) ? $u->name : null;
+        if ($display === null) {
+            foreach (array('username', 'login', 'full_name') as $f) {
+                if (isset($u->$f)) {
+                    $display = $u->$f;
+                    break;
+                }
+            }
+        }
+
+        return array(
+            'id' => method_exists($u, 'getAuthIdentifier') ? $u->getAuthIdentifier() : null,
+            'email' => $email,
+            'name' => $display,
+            'guard' => $name,
+        );
     }
 
     /**
